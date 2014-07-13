@@ -17,7 +17,7 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 BEGIN {
-    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+    unshift (@INC, "../p5-gps");
 }
 
 use Device::SerialPort;
