@@ -1,0 +1,13 @@
+See PDF page 86 of IS-GPS-200D.pdf
+See PDF page 121 of IS-GPS-200D.pdf
+
+word1: tlm
+word2: how
+word3: dataid:2, svid:6, e:16
+word4: t_oa:8, sigma_i:16
+word5: omega_dot:16, health:8
+word6: sqrtA:24
+word7: omega0:24
+word8: w:24
+word9: m0:24
+word10: af0hi:8, af1:11,af0lo:3, junk:2

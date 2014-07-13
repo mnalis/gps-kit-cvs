@@ -1,0 +1,61 @@
+#!/usr/bin/perl -s
+
+# $CSK: sirfdbget,v 1.20 2005/02/18 22:50:30 ckuethe Exp $
+
+# Copyright (c) 2004-2006 Chris Kuethe <ckuethe@ualberta.ca>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+BEGIN {
+    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+}
+
+use GPS::Tools;
+use GPS::SiRF::Lib;
+use GPS::SiRF::Decoders;
+use GPS::SiRF::Decoders::Decoder_002 ;
+use GPS::SiRF::Decoders::Decoder_004 ;
+use GPS::SiRF::Decoders::Decoder_005 ;
+use GPS::SiRF::Decoders::Decoder_006 ;
+use GPS::SiRF::Decoders::Decoder_007 ;
+use GPS::SiRF::Decoders::Decoder_008 ;
+use GPS::SiRF::Decoders::Decoder_009 ;
+use GPS::SiRF::Decoders::Decoder_010 ;
+use GPS::SiRF::Decoders::Decoder_011 ;
+use GPS::SiRF::Decoders::Decoder_012 ;
+use GPS::SiRF::Decoders::Decoder_013 ;
+use GPS::SiRF::Decoders::Decoder_014 ;
+use GPS::SiRF::Decoders::Decoder_015 ;
+use GPS::SiRF::Decoders::Decoder_017 ;
+use GPS::SiRF::Decoders::Decoder_018 ;
+use GPS::SiRF::Decoders::Decoder_027 ;
+use GPS::SiRF::Decoders::Decoder_028 ;
+use GPS::SiRF::Decoders::Decoder_029 ;
+use GPS::SiRF::Decoders::Decoder_030 ;
+use GPS::SiRF::Decoders::Decoder_031 ;
+use GPS::SiRF::Decoders::Decoder_041 ;
+use GPS::SiRF::Decoders::Decoder_050 ;
+use GPS::SiRF::Decoders::Decoder_052 ;
+use GPS::SiRF::Decoders::Decoder_255 ;
+use DBI;
+use Time::HiRes	qw(time);
+
+use warnings;
+use strict;
+
+my $packet = pack("H*", '0000000001200ef1a1e600000000000000000000000017dcd1fed2fc7e19000030ff00003e38000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000');
+
+print hexdump($packet) . "\n\n";
+my $quiet = 0;
+my $tm = "0.000000";
+sirf_packet_41($packet, $quiet, $tm);

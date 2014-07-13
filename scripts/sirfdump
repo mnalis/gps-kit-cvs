@@ -1,0 +1,87 @@
+#!/usr/bin/perl
+
+# $CSK: sirfdump,v 1.4 2006/09/07 15:17:36 ckuethe Exp $
+
+# Copyright (c) 2004-2006 Chris Kuethe <ckuethe@ualberta.ca>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+BEGIN {
+    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+}
+
+use GPS::Tools;
+use GPS::SiRF::Lib;
+use Time::HiRes		qw(gettimeofday usleep time);
+use Time::Local;
+
+use warnings;
+use strict;
+
+my ( @p, $packet, %asyncmask, $errno, $buf, $f);
+
+my $quiet = 1;
+
+while (@ARGV){
+	if ($ARGV[0] !~ /^-/){
+		last;
+	}
+	if ($ARGV[0] eq '--'){
+		shift @ARGV;
+		last;
+	}
+	if ($ARGV[0] eq '-v'){
+		$quiet = 0;
+		use GPS::SiRF::Decoders;
+		shift @ARGV;
+		next;
+	}
+	if ($ARGV[0] eq '-u'){
+		$| = 1;
+		shift @ARGV;
+		next;
+	}
+}
+
+die "No dump file!\n" unless ($ARGV[0]);
+
+while (@ARGV){
+	open($f, shift @ARGV) or next;
+	getpacket($f);
+	close($f);
+}
+
+###########################################################################
+sub getpacket{
+	my @x = (0,0);
+	my $buf = "";
+	my $r = 1;
+	my $f = $_[0];
+	my ($len, $body, $packet, $z, $x);
+
+	while (read $f, $x, 4096) {
+		$buf .= $x;
+		while ($buf =~ /(\xa0\xa2.+?\xb0\xb3)(.*)/gism){
+			
+			$packet = $1;
+			$z = sprintf ("matched %d bytes in %d byte buffer\n", length($packet), length($buf));
+			$buf = $2;
+			if ($quiet){
+				$x = sirf_packet_type($packet);
+				printf ("%14.5f %s\n", time(), sirf_packet_name(sirf_packet_type($packet)));
+			} else {
+				parse_packet_sirf($packet);
+			}
+		}
+	}
+}

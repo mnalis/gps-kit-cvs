@@ -1,0 +1,228 @@
+#!/usr/bin/perl -s
+
+# $CSK: sirfdbget,v 1.31 2006/09/07 15:17:36 ckuethe Exp $
+
+# Copyright (c) 2004-2006 Chris Kuethe <ckuethe@ualberta.ca>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+BEGIN {
+    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+}
+
+use GPS::Tools;
+use GPS::SiRF::Decoders;
+use GPS::SiRF::Lib;
+use DBI;
+use Time::HiRes	qw(time);
+
+use warnings;
+use strict;
+
+# turning off autoflush makes this about 10% faster
+#$| = 1;
+my ($packet, $i, @tm, $dbh, $sth, $sql, $mt, $sid, @rv);
+
+if (defined($main::lt) && defined($main::lt)){
+	print <<EOF;
+	Navigation Solution 			2
+	Measured Tracker Data 			4
+	Raw Tracker Output (obsolete) 		5
+	Version String 				6
+	Clock Status 				7
+	50Hz Data 				8
+	CPU Utilization 			9
+	Error 					10
+	Command ACK 				11
+	Command NAK 				12
+	Visble List 				13
+	Almanac Data 				14
+	Ephemeris Data 				15
+	Differential Corrections 		17
+	OkToSend 				18
+	DGPS Status 				27
+	NavLib Measurement Data 		28
+	NavLib DGPS Data 			29
+	NavLib SV State Data 			30
+	NavLib Initialization Data 		31
+	Geodetic Navigation Data 		41
+	SBAS Corrections 			50
+	PPS Time 				52
+	Debug 					255
+EOF
+	exit;
+}
+
+if (defined($main::h) && defined($main::h)){
+	print <<EOF
+Usage: $0 [-h|-list||-type=...] <-last> <-not> <-sensor> <-run> <-after=...> <-before=...>
+    -after	select packets after or equal to the given unix time
+    -before	select packets before or equal to the given unix time
+    -h		show this help screen
+    -list	list packets in the database
+    -sensor	select only packets from these sensors. comma separated list.
+    -first	select only the single first packet
+    -last	select only the single last packet
+    -lt		list the type to number mapping
+    -lr		list the sessions (runs) in the database
+    -ls		list the sessions (runs) in the database
+    -run	select only this session (run) number
+    -session	select only this session (run) number
+    -type	select only these packet types. comma separated list.
+    -not	exclude listed packet types from display
+    -hexl	just hexdump the packet on a line
+EOF
+;
+	exit(0);
+}
+
+
+my $db_host = "127.0.0.1";
+my $db_name = "gpsobservatory";
+my $db_user = "gpsobserver";
+my $db_pass = "gpsobserver";
+
+$dbh = DBI->connect("dbi:mysql:database=$db_name;host=$db_host",
+	$db_user, $db_pass, {'RaiseError' => 0});
+
+if ((defined($main::lr) && defined($main::lr)) || (defined($main::ls) && defined($main::ls))){
+	my ($session, $station, $sensor, $x, $y, $m);
+	$sql = 'SELECT * FROM sessions ORDER BY session_id';
+	$sth = $dbh->prepare($sql);
+	$sth->execute();
+
+	while ( ($session, $sensor, $station, $x, $y, $m) = $sth->fetchrow_array ) {
+		printf("(%3d) Sensor %d/%d: ", $session, $station, $sensor);
+		if ($y){
+		printf("%d - %d ", $x, $y);
+		printf("(%12fs at %s)", ($y - $x), scalar localtime(int $x));
+		printf(" [$m]", $m) if (defined($m) && $m);
+		} else {
+		printf ("%s (not closed)", scalar localtime (int $x));
+		}
+		print "\n";
+	}
+	exit;
+}
+
+if (defined($main::list) && defined($main::list)){
+	$sql = "SELECT DISTINCT msgtype FROM observations ORDER BY msgtype";
+	$sth = $dbh->prepare($sql);
+	$sth->execute();
+
+	while ( defined($packet = ($sth->fetchrow_array)[0]) ) {
+		push(@tm, $packet) if ($packet);
+	}
+	print "Packet types in database: @tm \n";
+	exit;
+}
+
+$sql = '(1 = 1) ';
+
+if (defined($main::after) && defined($main::after)){
+	if ($main::after =~ /(\d+)/){
+		$sql .= " AND (msgtime >= $1)";
+	}
+}
+
+if (defined($main::before) && defined($main::before)){
+	if ($main::before =~ /(\d+)/){
+		$sql .= " AND (msgtime <= $1)";
+	}
+}
+
+if (defined($main::type) && defined($main::type)){
+	if( $main::type =~ /^[^0]/){
+		$sql .= 'AND (';
+		foreach (split(/[,\s]/, $main::type)){
+			$sql .= " OR " if ($sql =~ /msgtype/);
+			$sql .= "msgtype='$_'";
+		}
+		$sql .= ')';
+	}
+}
+
+if (defined($main::session) && defined($main::session)){
+	$main::run = $main::session;	
+}
+
+if (defined($main::run) && defined($main::run)){
+	if( $main::run =~ /^[^0]/){
+		$sql .= 'AND (';
+		foreach (split(/[,\s]/, $main::run)){
+			$sql .= " OR " if ($sql =~ /session_id/);
+			$sql .= "session_id='$_'";
+		}
+		$sql .= ')';
+	}
+}
+
+if (defined($main::sensor) && defined($main::sensor)){
+	if( $main::sensor =~ /^[^0]/){
+		$sql .= 'AND (';
+		foreach (split(/[,\s]/, $main::sensor)){
+			$sql .= " OR " if ($sql =~ /sensor_id/);
+			$sql .= "sensor_id='$_'";
+		}
+		$sql .= ')';
+	}
+}
+
+if (defined($main::not) && defined($main::not)){
+	$sql = "NOT ( $sql )";
+}
+
+$sql .= " ORDER BY obs_id";
+
+if (defined($main::first) && defined($main::first)){
+	$sql .= " LIMIT 1";
+}elsif (defined($main::last) && defined($main::last)){
+	$sql .= " DESC LIMIT 1";
+}
+
+$sql = "SELECT SQL_CACHE sensor_id,msgtime,msg FROM observations WHERE $sql";
+#print "$sql\n";
+
+$sth = $dbh->prepare($sql);
+
+my $hex = 0;
+$hex = 1 if (defined($main::hexl) && defined($main::hexl));
+
+@tm = ();
+$i = 0;
+$tm[0] = time();
+$sth->execute();
+$tm[1] = time();
+printf STDERR ("SQL exec time: %f\n",	$tm[1]-$tm[0]);
+while ( ($sid,$mt,$packet) = ($sth->fetchrow_array)[0,1,2] ) {
+	$i++;
+
+	if($hex){
+		print unpack("H*", $packet) . "\n";
+	} else {
+		print "Sensor #$sid\n";
+		# this line will let the decoders print the packet
+		@rv = parse_packet_sirf($packet,0,$mt);
+	}
+
+	# the next 2 lines will decode the packet silently, storing the
+	# payload in an array for later use... like the print "@rv" ...
+	# @rv = parse_packet_sirf($packet,1,$mt);
+	# print "@rv\n";
+}
+$tm[2] = time();
+
+printf STDERR ("SQL exec time: %f\n",	$tm[1]-$tm[0]);
+printf STDERR ("Decode time: %f\n",	$tm[2]-$tm[1]);
+printf STDERR ("Packets Printed: %d\n",	$i);
+printf STDERR ("Run Time: %f\n",	$tm[2]-$tm[0]);

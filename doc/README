@@ -1,0 +1,84 @@
+# $CSK: README,v 1.1 2005/06/10 17:34:19 ckuethe Exp $ 
+
+Chris' GPS Hackery: What Is All This Stuff
+==========================================
+
+Briefly, this file provides a high-level overview of the scripts included in
+my GPS package. Some of these tools do not yet work, but I've included them
+anyway, so that you might be enlightened about how to use the library or to
+shame me into making them work. On to the Good Stuff. Looking at the various
+SiRF tools, I should consider abstracting much of their specific magicks into
+the SiRF module and then unifying them into one control tool. Or not. *shrug*
+
+	gar-sniff.pl
+	--------------
+This program attempts to decode the Garmin messages transmitted by my eTrex
+receiver. Yet Another sniffer type program.
+
+	garmin.pl
+	--------------
+Generic Garmin control program. Or at least it will be. This doesn't work, and
+probably doesn't even compile. Thus the reason it's not even imported to CVS.
+
+	nmea-time.pl
+	--------------
+I was thinking about turning this into some sort of time synchronization
+widget. Haven't done the time calculations yet, and quite frankly I'm not
+sure this is even a good idea. Still, for those who want to go rummaging
+about with NMEA data, here's one way to do it.
+
+	nmea-tool.pl
+	--------------
+NMEA-driven, curses status monitor that also kicks out graphs. This would
+probably make a good framework for implementing something like SiRFdemo or
+VisualGPS.
+
+	nmea.pl
+	--------------
+NMEA driven data dumper.
+
+	sirfdb
+	--------------
+This program connects to a SiRFstarII(e/lp) - possibly other SiRF chips too -
+turns on full logging and then stuffs the messages into a database in real
+time. Handy for developing decoders for the various messages, or for doing
+post-processing.
+
+	sirfdbget
+	--------------
+This program is an example of how to pull measurements from the aforementioned
+database. I also have some fairly moldy C code that does something similar.
+
+	sirfdump
+	--------------
+This program reads a packet dump file from disk and prints out the contents,
+either as a short packet type dump, or a full verbose decode.
+
+	sirfproto
+	--------------
+This program is used to force the protocol and speed of serial port 1 on a
+SiRF chip to whatever we request. Handy if someone gives you a receiver in
+binary mode and you want NMEA, or if the receiver has defaulted to the wrong
+speed or protocol.
+
+	sirftool.pl
+	--------------
+This program is somewhat similar to sirfdb, except that it can write SiRF
+packets to disk for later consumption.
+
+	testdecode
+	--------------
+A shell for decoding SiRF packets. I should probably change this to allow for
+a packet to be read in from a pipe or be specified on the command line.
+
+	textplot.pl
+	--------------
+This program converts the Garmin simple text output format into something a
+bit more gnuplot friendly
+
+	timesirfer
+	--------------
+As the SiRF chip gives us time to the microsecond, I could use that to build
+a timeserver. Poll time at about 10Hz and use that to steer the clock. I don't
+yet have good steering and jitter suppression models, but I've not forgotten
+about this.

@@ -1,0 +1,206 @@
+#!/usr/bin/perl -s
+
+# $CSK: sirfdb,v 1.24 2006/09/07 15:17:36 ckuethe Exp $
+
+# Copyright (c) 2004-2006 Chris Kuethe <ckuethe@ualberta.ca>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+BEGIN {
+    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+}
+
+use strict;
+use warnings;
+
+use GPS::Tools;
+use GPS::SiRF::Lib;
+if (defined($main::v) && defined($main::v)){
+	use GPS::SiRF::Decoders
+}
+use DBI;
+use Time::HiRes	qw(time usleep);
+use Fcntl;
+
+select((select(STDOUT), $| = 1)[0]);
+select((select(STDERR), $| = 1)[0]);
+
+my ($sp, $i, @p, $packet, $buf, $eb, $et, $tmr, $gp, $sid, $num, $c);
+
+$SIG{'INT'} = $SIG{'QUIT'} = $SIG{'TERM'} = \&bail;
+my $PORT = "";
+for($i = 0; $i <= 3 ; $i++){
+	$@ = "";
+	eval { sysopen(LOCK, "/var/tmp/lockfile.cuaU${i}", O_EXCL|O_CREAT) or die "lockfile"; close(LOCK);};
+	$PORT = sprintf("/dev/cuaU%d", $i) unless ($@);
+	goto N if ($PORT);
+}
+
+die "Error locking serial ports\n" unless ($PORT);
+
+N: print STDERR "Reading from $PORT\n";
+$et = time();
+$tmr = int $et;
+$eb = 0;
+do { 
+	$@ = "";
+	eval {
+		$sp = init_serial($PORT, 4800);
+	};
+	#avoid a busy wait
+	if ($@){ print "$@\n"; sleep 1; }
+}while($@);
+
+sirf_sync_serial($sp, "sirf", 57600);
+
+my $db_host = "127.0.0.1";
+my $db_name = "gpsobservatory";
+my $db_user = "gpsobserver";
+my $db_pass = "gpsobserver";
+
+my $dbh = DBI->connect("dbi:mysql:database=$db_name;host=$db_host",
+	$db_user, $db_pass, {'RaiseError' => 0});
+
+my $sth = $dbh->prepare(
+	q{insert into observations (session_id, station_id, sensor_id, msgtime, msgtype, msglen, msg) values (?,1,?,?,?,?,?)}
+	) or die $dbh->errstr;
+
+$gp = 0;
+usleep(50000);
+$sp->read(1024);
+
+do_config();
+$c = 0;
+getpacket($sp);
+
+
+###########################################################################
+sub getpacket{
+	my $sp = $_[0];
+	my $buf = "";
+	my $tmx = time();
+	my $timer = $tmx;
+	my $ftimer = $tmx;
+	my ($len, $body, $cksum, $cx, $type, $tm, $packet, $z, @x);
+
+	$sp->read_const_time(50);
+	while (1) {
+		$tmx = time();
+
+		if (($tmx - $ftimer) > 5){
+			$ftimer = $tmx;
+			sirf_setpacketinterval($sp, 52,1,1);
+			sirf_setpacketinterval($sp, 5,1,1);
+			sirf_setpacketinterval($sp, 7,1,1);
+			sirf_setpacketinterval($sp, 8,1,1);
+			sirf_setpacketinterval($sp, 17,1,1);
+			sirf_setpacketinterval($sp, 28,1,1);
+			sirf_setpacketinterval($sp, 29,1,1);
+			sirf_setpacketinterval($sp, 30,1,1);
+			sirf_setpacketinterval($sp, 31,1,1);
+			sirf_setpacketinterval($sp, 52,1,1);
+			do_config() unless ($c);
+		}
+
+		@x = $sp->read(1024);
+		if ($x[0]){
+			$buf .= $x[1];
+		}
+		if(length($buf) > 3072){
+			print "***\n";
+			$buf = '';
+		}
+
+		while ($buf =~ /(\xa0\xa2.+?\xb0\xb3)(.*)/gism){
+			$tm = sprintf("%14.5f", time());
+
+			if($gp == 0){
+				my $q = sprintf("INSERT INTO sessions(station_id, sensor_id, start) VALUES (1, '%d', '%f')", $i+1, $tm);
+				eval { $dbh->do($q); };
+				$sid = $dbh->{'mysql_insertid'};
+				$gp = 1;
+				$num = 0
+			}
+
+			($packet, $buf) = ($1, $2);
+
+			$type = sirf_packet_type($packet);
+			$eb += $len = length($packet);
+
+			printf("time: %14.5f type: %d len: %d\n", $tm, $type, $len) unless (defined($main::q) && defined($main::q));
+			parse_packet_sirf($packet, 0) if (defined($main::v) && defined($main::v));
+
+			$sth->execute($sid, $i+1, $tm, $type, $len, $packet) or bail($dbh->errstr);
+			$num++;
+		}
+
+		if (($tmx - $timer) > 300){
+			$timer = $tmx;
+			update_stats(0);
+			# Big slow queries
+			# Query 132 Answer 6 = software version
+			sirf_runquery($sp, 132);
+			# Query 144 Answer 7 = clock data
+			sirf_runquery($sp, 144);
+			# Query 146 Answer 14 = Almanac
+			sirf_runquery($sp, 146);
+			# Query 147 Answer 15 = Ephemeris
+			sirf_runquery($sp, 147);
+		}
+	}
+}
+
+sub do_config{
+	$| = 1;
+	sirf_disable_tricklepower($sp);
+	print "."; usleep(50000);
+	sirf_enable_tracker($sp);
+	print "."; usleep(50000);
+	sirf_enable_tracker($sp);
+	print "."; usleep(50000);
+	sirf_enable_sbas($sp);
+	print ".\n";
+	$| = 0;
+	$c = 1;
+}
+
+sub update_stats{
+	my $closed = shift;
+	my $s;
+	if ($gp){
+		if ($closed){
+			printf STDERR ("\nElapsed time: %fs, Transfer: %d bytes, Messages: %d\n", (time() - $et), $eb, $num);
+			printf STDERR ("Sustained I/O speed: %5.1fbps\n", 8*$eb/(time() - $et));
+			$s = '';
+		} else {
+			$s = '(session not closed) ';
+		}
+
+		$s .= sprintf ("Elapsed: %fs, Transfer: %d bytes, Messages: %d, I/O speed: %5.1fbps", (time() - $et), $eb, $num, 8*$eb/(time() - $et));
+		my $tm = sprintf("%14.5f", time());
+		my $q = sprintf("UPDATE sessions SET stop='%f', comments='%s' where session_id='%d'", $tm, $s, $sid);
+		eval { $dbh->do($q); };
+	}
+}
+
+sub bail{
+	my $m = shift;
+	print "die($m)\n" if (defined($m) && ($m));
+	eval{ $sp->close(); undef $sp; };
+	unlink("/var/tmp/lockfile.cuaU${i}");
+	
+	update_stats(1);
+
+	print "Exiting...\n";
+	exit;
+}

@@ -1,0 +1,58 @@
+#!/usr/bin/perl
+
+# $CSK: sirfproto,v 1.4 2006/09/07 15:17:36 ckuethe Exp $
+
+# Copyright (c) 2004-2006 Chris Kuethe <ckuethe@ualberta.ca>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+BEGIN {
+    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+}
+
+use GPS::Tools;
+use GPS::SiRF::Lib;
+
+use warnings;
+use strict;
+
+if (3 != scalar @ARGV){
+	die "Usage: $0 <port> [nmea|sirf] [4800|9600|19200|38400|57600]\n";
+}
+
+
+$ARGV[0] = sprintf("/dev/%s", $ARGV[0])
+	unless ( $ARGV[0] =~ /^\/dev\//);
+warn sprintf("Using tty '%s' - shouldn't you be using a 'cu' device?\n", $ARGV[0]) 
+	if ( $ARGV[0] =~ /tty/);
+
+die sprintf("Invalid port: %s\n", $ARGV[0]) 
+	unless (-c $ARGV[0]);
+die sprintf("Invalid proto: %s\n", $ARGV[1]) 
+	unless ($ARGV[1] =~ /nmea|sirf/);
+die sprintf("Invalid speed: %s\n", $ARGV[2]) 
+	unless ($ARGV[2] =~ /^(4800|9600|19200|38400|57600)$/i);
+
+$| = 1;
+$SIG{'INT'} = $SIG{'HUP'} = $SIG{'TERM'} = \&bye;
+my $sp;
+
+# SiRF boots up at 4800 bps
+$sp = init_serial($ARGV[0], 4800);
+print "serial port opened\n";
+
+# knock it up a notch... bam!
+sirf_sync_serial($sp, $ARGV[1], $ARGV[2]);
+
+bye();
+

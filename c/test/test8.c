@@ -1,0 +1,39 @@
+#include <sys/types.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "sirfutils.h"
+#include "sirfmessage8.h"
+
+extern char * malloc_options;
+
+int
+main(){
+	struct sm8 *r;
+	xbuf *packet;
+	unsigned long *length;
+	char m[100] = {
+0xa0, 0xa2, 0x00, 0x2b, 0x08, 0x06, 0x08, 0x22, 0xc1, 0x34, 0xe0, 0x1b, 0xc9, 0x77, 0x43, 0xed, 0xeb, 0x07, 0x6e, 0xbd, 0xac, 0x7f, 0x77, 0xe9, 0x59, 0x69, 0x74, 0x0e, 0xbc, 0xed, 0xc5, 0x6c, 0x1c, 0xce, 0xcc, 0x32, 0xe2, 0x85, 0x51, 0x47, 0xc0, 0x3d, 0x60, 0x2e, 0xce, 0x30, 0x83, 0x14, 0x51, 0xb0, 0xb3
+	};
+
+
+	malloc_options = "AFGJXZ";
+	packet = xballoc(51);
+	packet->len = packet->max = 51;
+	bcopy(&m, packet->buf, packet->len);
+
+	printf("==============================================================\n");
+	printf("type %d, len %d (%svalid)\n",
+		sirf_type(packet), packet->len,
+		sirf_is_valid(packet)?"":"in" );
+
+	hexdump(packet->buf, packet->len);
+	r = sirf_decode_message_8(packet);
+	dump_message_8(r);
+	free(r);
+
+	xbfree(packet);
+	return 0;
+}
+

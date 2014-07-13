@@ -1,0 +1,204 @@
+#!/usr/bin/perl -s
+
+# $CSK: timesirfer,v 1.11 2006/09/07 15:17:36 ckuethe Exp $
+
+# Copyright (c) 2004-2006 Chris Kuethe <ckuethe@ualberta.ca>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+BEGIN {
+    unshift (@INC, "/home/ckuethe/cvs/local/gps/p5-gps");
+}
+
+use GPS::Tools;
+use GPS::SiRF::Decoders;
+use GPS::SiRF::Lib;
+use Time::HiRes	qw(time usleep);
+
+use warnings;
+use strict;
+
+$| = 1;
+
+my $sp;
+my (%state, @filter, @corr);
+my $in_adjtime = 0;
+$state{'valid'} = 0;
+
+#gotta find a better way to get this...
+$state{'leap'} = 13;
+$state{'svs'} = 0;
+$state{'dop'} = 100;
+
+my $PORT = "/dev/gps0";
+
+my $z = 38400;
+do { 
+	$@ = "";
+	eval {
+		$sp = init_serial($PORT, $z);
+	}
+}while($@);
+
+sirf_setspeed($sp, $z);
+
+#$SIG{'INT'} = $SIG{'QUIT'} = $SIG{'TERM'} = \&bail;
+open(F, ">>/tmp/timesirfer.log") || die "open log: $!\n";
+select((select(F), $| = 1)[0]);
+packet_loop($sp);
+
+
+###########################################################################
+sub packet_loop{
+	my $sp = $_[0];
+	my $buf = "";
+	my ($type, $packet);
+	my $do_init = 3;
+
+	$sp->read_const_time(50);
+	while (1) {
+		if ($do_init){
+			$do_init--;
+			sirf_disable_tracker($sp);
+			sirf_disable_tricklepower($sp);
+			sirf_enable_sbas($sp);
+
+			# grab the raw satellite data - time in sec.usec
+			sirf_setpacketinterval($sp, 30,1,0);
+			# geodetic navigation data
+			sirf_setpacketinterval($sp, 41,1,0);
+			# PPS time
+			sirf_setpacketinterval($sp, 52,1,0);
+			# clock status - extended week number
+			sirf_setpacketinterval($sp, 7,1,0);
+		}
+
+		$buf .= ($sp->read(255))[1];
+
+		while ($buf =~ /(\xa0\xa2.+?\xb0\xb3)(.*)/gism){
+			($packet, $buf) = ($1, $2);
+			process($packet);
+		}
+	}
+}
+
+sub process{
+	my $packet = shift;
+	my (@rv, $valid, @x);
+
+	my $tmx = time();
+	my $type = sirf_packet_type($packet);
+	if ($type == 30){
+		#sv, gpstime, clock bias, clock drift
+		$state{'local'} = time();
+		@rv = (parse_packet_sirf($packet,1))[0,1,8,9];
+		$state{'sv'} = $rv[0];
+		$state{'tow'} = $rv[1];
+	} elsif ($type == 2){
+		#mode 1, hdop, mode 2, gps week, gps tow, num SVs in fix
+		@rv = (parse_packet_sirf($packet,1))[6..11];
+		#RTFM, SiRF Binary Protocol Reference, Table 3-8 Mode 2
+		$state{'valid'} = 1 if (($rv[0] > 2) && ($rv[2] & 0x02));
+		$state{'valid'} = 1 if ((($rv[0] == 3) || ($rv[0] == 5)) && ($rv[1] < 20));
+		$state{'valid'} = 1 if ((($rv[0] == 4) || ($rv[0] == 6)) && ($rv[1] < 10));
+		printf("waiting for a fix... [%s SVs, DOP %d]\n",
+			$state{'svs'}, $state{'dop'}) unless ($state{'valid'}); 
+	} elsif ($type == 7){
+		#gps week, gps tow, svs, clock drift, clock bias, est gps time
+		@rv = parse_packet_sirf($packet,1);
+		$state{'week'} = $rv[0];
+		$state{'svs'} = $rv[2];
+		$state{'drift'} = $rv[3];
+		$state{'bias'} = $rv[4];
+#	} elsif ($type == 8){
+#		# this may be the VERY HARD WAY to get number of leap seconds
+#		#delta T(ls), SF 4, p 18, (word 9)&0xff
+#		@rv = parse_packet_sirf($packet,1);
+	}
+	setclock();
+}
+
+sub gps2epoch{
+	my($week, $tow, $leap, undef) = @_;
+	# GPS time started at unix second 315964800 (Sun Jan  6 00:00:00 1980)
+	# http://tycho.usno.navy.mil/leapsec.html (all about leap seconds)
+	return (315964800 + ($week * 604800) + $tow - $leap);
+}
+
+sub setclock{
+	return unless ($state{'valid'} && $state{'leap'} && $state{'week'} && $state{'tow'});
+	my $b = $state{'local'};
+	my $a = gps2epoch($state{'week'}, $state{'tow'}, $state{'leap'});
+	printf("UNX: %f\t%s\n", $b, scalar localtime($b));
+	printf("GPS: %f\t%s\n", $a, scalar localtime($a));
+	printf("Dif: %f\t", $a-$b);
+	printf(F "%f %f ", $a, $a-$b);
+	filter($a - $b) if ($state{'valid'});
+	print "-" x 40 . "\n";
+}
+
+sub filter{
+	#this is a 2 stage filter, composed of 
+	#	an N element median selector
+	#	an M element decaying average
+	my $diff = $_[0];
+	my $fs1 = 9;
+	my $fs2 = 9;
+	my $f = 0;
+	my ($x, $y, $z);
+	
+
+	unshift(@corr, $diff);
+	@corr = @corr[0..($fs1 - 1)] if ($fs1 < @corr);
+	my $d = (sort @corr)[@corr / 2];
+
+	unshift(@filter, $d);
+	@filter = @filter[0..($fs2 - 1)] if ($fs2 < @filter);
+	$x = @filter;
+	for(my $i = 0; $i < $x; $i++){
+		$f += ($filter[$i] * ($x - $i));
+	}
+	$f /= func($x);
+	$f = sprintf("%0.6f", $f+0.00000000001);
+	print "FLT: $f\n";
+	print F "$f\n";
+
+	$x = 1; $x = -1 if ($f<0);
+	$f = abs($f);
+	$y = int($x * $f); $z = int($x * ($f - int $f) * 1000000);
+	print "tv_sec = $y , tv_usec = $z\n";
+
+	unless ($in_adjtime){
+		if ((abs $f) > 0.05){	# XXX
+			sys_adjtime($y,$z)
+		} else {
+			sys_adjtime(0,int($z/2))
+		}
+	}
+	$in_adjtime = ((abs $f) > 0.05);
+	$state{'valid'} = 0;
+}
+
+sub func{
+	return 1 if $_[0] < 1;
+	$a = 0;
+	foreach (0 .. $_[0]){
+		$a += $_;
+	}
+	return $a;
+}
+
+sub sys_adjtime{
+	my ($tv_sec,$tv_usec,undef) = @_;
+	return syscall(140 , pack("ll", $tv_sec, $tv_usec));
+}
