@@ -17,6 +17,8 @@
 #include "datstruc.h"
 #include "protos.h"
 
+#include "strlcat.c"
+
 /* global variable */
 /* --------------- */
 RAWDATA rwd;			/* message 005 data  - defined in defines.h */

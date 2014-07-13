@@ -1,7 +1,7 @@
 # $CSK: Makefile,v 1.7 2006/09/15 15:42:30 ckuethe Exp $
 CC=cc
 CFLAGS=-pipe -O2 -Wall -g -I.
-CPPFLAGS=-Wall -ansi
+CPPFLAGS=-Wall -ansi -D_GNU_SOURCE
 LDFLAGS=
 
 OBJS= calcpsr.o caleph.o main.o
