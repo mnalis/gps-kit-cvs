@@ -28,6 +28,9 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include "calcpsr/strlcat.c"
+
+
 #define PROTO_SIRF 0
 #define PROTO_NMEA 1
 #define MAX_PACKET_LENGTH 512
